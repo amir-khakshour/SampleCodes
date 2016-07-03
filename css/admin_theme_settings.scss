@@ -1,0 +1,249 @@
+/*-------------------------------------------------------------------------*/
+/* Admin Theme Settings Styles
+/*-------------------------------------------------------------------------*/
+.acquia-theme-options {
+  .omega-extension {
+    // Reset
+    .fieldset-wrapper .fieldset-wrapper {
+      .form-type-checkbox {
+        text-align: left;
+      }
+      .fieldset-legend {
+        font-size: 13px;
+        display: block;
+        height: 3em;
+        line-height: 3em;
+      }
+      .fieldset-legend .font-icon {
+        display: inline-block;
+      }
+    }
+  }
+
+  // vertival tab button
+  .vertical-tabs li.vertical-tab-button {
+    position: relative;
+    z-index: 2;
+    text-transform: capitalize;
+    &.selected {
+    }
+    &:focus {
+      outline: none;
+    }
+    a {
+      border-left: none !important;
+      border-right: none;
+      background: #4C5566;
+      padding: 15px 15px;
+      position: relative;
+      text-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
+      border-bottom: 1px solid rgba(0, 0, 0, 0.05) !important;
+      border-top: 1px solid rgba(255, 255, 255, 0.05) !important;
+      transition: color .3s ease-in-out 0s;
+      color: #A7AFBD;
+      font-size: 13px;
+      &:hover {
+      }
+      strong {
+        margin-left: 10px;
+      }
+      .tab-icon {
+        @extend %ac-font-admin;
+        display: inline-block;
+        width: 20px;
+        color: inherit;
+        position: relative;
+        bottom: -2px;
+        &:before {
+          content: '\e80c';
+        }
+      }
+    }
+  }
+
+  // Font ICONS
+  li.edit-global .tab-icon:before {
+    content: '\E80B';
+  }
+  li.edit-skin .tab-icon:before {
+    content: '\e804';
+  }
+  li.edit-layouts .tab-icon:before {
+    content: '\e812';
+  }
+  li.edit-development .tab-icon:before {
+    content: '\e80a';
+  }
+  li.edit-compatibility .tab-icon:before {
+    content: '\e80e';
+  }
+  li.edit-assets .tab-icon:before {
+    content: '\e815';
+  }
+  li.edit-misc .tab-icon:before {
+  }
+  li.edit-header .tab-icon:before {
+    content: '\e810';
+  }
+  li.edit-shortcodes .tab-icon:before {
+    content: '\e80d';
+  }
+
+  // Hack
+  .vertical-tab-button a:hover,
+  ul.vertical-tabs-list li.selected a, ul li.selected a:hover,
+  ul.vertical-tabs-list li.selected a:focus, ul li.selected a:active {
+    background-color: rgba(0, 0, 0, 0.075) !important;
+    color: #fff;
+  }
+}
+
+/** Appearence **/
+.has-js .color-scheme-fields {
+  display: none;
+}
+
+.acquia-styles-list a.acquia-color-scheme {
+  @extend %full-edge-circled-border;
+  display: inline-block;
+  font-family: "Trebuchet MS", sans-serif;
+  padding: 6px 0;
+  //background: #5c951e url(../images/admin/bg-button.png) repeat-x top left;
+  color: white;
+  cursor: pointer;
+  outline: none;
+  font-size: 12px;
+  text-decoration: none;
+  margin: 3px 3px 0 0;
+  opacity: 0.3;
+  width: 110px;
+  text-align: center;
+  &.active {
+    opacity: 1;
+  }
+}
+
+// edit-omega-layout
+#edit-omega-layout {
+  &.ac-sel {
+    margin-left: 20px;
+    input, label {
+      display: none;
+      margin: 0;
+      padding: 0;
+    }
+    .omega-layout-selection-wrapper {
+      display: inline-block;
+    }
+    img {
+      margin: 0;
+      top: 0;
+      position: relative;
+      height: auto;
+      display: block;
+    }
+  }
+  a.omega-layout-sel {
+    margin: 0 10px 10px 0;
+    display: inline-block;
+    position: relative;
+  }
+}
+
+.ac-g-font-preview {
+
+}
+
+.ac-admin {
+  .ac-sel {
+    position: relative;
+    &.active {
+      i {
+        background: url(../images/checkmark.png) no-repeat center center rgba(0, 0, 0, .05);
+        border-color: #DF7272;
+      }
+    }
+    i {
+      position: absolute;
+      display: block;
+      top: -2px;
+      left: -2px;
+      bottom: -2px;
+      right: -2px;
+      border: 2px solid transparent;
+    }
+  }
+}
+
+/** Responsive
+--------------------------------------------------*/
+/** tablet view **/
+@include at-breakpoint($mobile-portrait) {
+  .acquia-theme-options .form-actions {
+    margin: 0 0 0 50px;
+    .form-submit {
+      margin-right: 8px;
+    }
+  }
+
+  .acquia-theme-options .vertical-tabs {
+    .vertical-tab-button {
+      a {
+        strong {
+          display: none;
+          position: absolute;
+          top: 0;
+          left: 50px;
+          padding: 21px 15px;
+          width: 200px;
+          background: $vtabs-bg-color;
+          border: 1px solid #333;
+          border-width: 1px 1px 1px 0px;
+          margin: 0;
+        }
+        &:hover {
+          strong {
+            display: block;
+          }
+        }
+      }
+      &.selected a:hover strong {
+        display: none;
+      }
+    }
+  }
+
+  .acquia-theme-options .vertical-tabs .vertical-tabs-list {
+    width: 50px;
+  }
+  .acquia-theme-options .vertical-tabs .vertical-tabs-panes {
+    margin: 0 0 0 50px;
+  }
+}
+
+/** tablet view **/
+@include at-breakpoint($big-scr) {
+  .acquia-theme-options .vertical-tabs {
+    .vertical-tab-button a strong {
+      display: inline-block !important;
+      width: auto;
+      background: transparent;
+      border: none;
+      position: inherit;
+      left: 0;
+      padding: 0;
+      margin-left: 10px;
+    }
+  }
+
+  .acquia-theme-options .vertical-tabs .vertical-tabs-list {
+    width: $vtabs-list-width;
+  }
+
+  .acquia-theme-options #ac-options-header,
+  .acquia-theme-options .vertical-tabs .vertical-tabs-panes,
+  .acquia-theme-options .form-actions {
+    margin: 0 0 0 $vtabs-list-width;
+  }
+}
+
