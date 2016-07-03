@@ -20,7 +20,6 @@ from flowder.amqp import amqp_message_encode, amqp_message_decode, amqp_message_
 from flowder.exceptions import InvalidAMQPMessage, EncodingError
 
 
-
 class AmqpService(service.Service):
     """
     Simple L{service.IService} which consumes an AMQP queue.

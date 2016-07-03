@@ -1,0 +1,825 @@
+<?php
+// DiamondLayers menu path
+define('ACQUIA_MENU_PATH', 'admin/acquia');
+
+// DiamondLayers node meta table name
+define('ACQUIA_NODE_META_TABLE', 'acquia_node_meta');
+@define('ACQUIA_CAROUSEL_PREVIEW_STYLE', 'rectangle-v-large');
+@define('ACQUIA_CAROUSEL_THUMB_STYLE', 'rectangle-v-medium');
+
+/* ***************************************** */
+/* INCLUDES                                  */
+/* ***************************************** */
+
+// A registry of variable_get defaults.
+require_once(dirname(__FILE__) . '/includes/variables.inc');
+
+// theme functions
+require_once(dirname(__FILE__) . '/includes/theme.inc');
+
+// Required CSS/JS libraries
+require_once(dirname(__FILE__) . '/includes/libs.inc');
+
+// Required Context - Layouts
+require_once(dirname(__FILE__) . '/includes/context.inc');
+
+// Required file styles
+require_once(dirname(__FILE__) . '/includes/styles.inc');
+
+/**
+ * Implements hook_menu().
+ */
+function acquia_menu() {
+  // Menu items that are basically just menu blocks.
+  $items[ACQUIA_MENU_PATH] = array(
+    'title' => 'Acquia',
+    'description' => 'Administer DiamondLayers sliders, menus, etc.',
+    'position' => 'right',
+    'weight' => -8,
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('acquia_general_setting'),
+    'access arguments' => array('access administration pages'),
+    'file' => 'includes/admin.inc',
+  );
+
+  // refresh theme settings
+  $items[ACQUIA_MENU_PATH . '/refresh-settings'] = array(
+    'title' => 'Refresh Acquia',
+    'description' => '',
+    'position' => 'right',
+    'weight' => 100,
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('acquia_refresh_setting'),
+    'access arguments' => array('access administration pages'),
+    'file' => 'includes/admin.inc',
+  );
+
+  $items['error404'] = array(
+    'title' => 'Page not found',
+    'access callback' => TRUE,
+    'page callback' => 'acquia_error404_page',
+    'type' => MENU_CALLBACK,
+    'file' => 'includes/page.inc',
+  );
+
+  return $items;
+}
+
+/**
+ * implementing hook_acquia_default_variables()
+ * @todo move to UI
+ */
+function acquia_acquia_default_variables() {
+  include_once DRUPAL_ROOT . '/includes/locale.inc';
+  $base_url = $GLOBALS['base_url'];
+  $base_path = variable_get('locale_language_negotiation_url_part', NULL) == LOCALE_LANGUAGE_NEGOTIATION_URL_PREFIX ? $base_url . '/' : url(NULL, array('absolute' => TRUE));
+  $lib_path = 'sites/all/libraries';
+
+  $empty_image = file_load(acquia_variable_get('empty_thumb_fid', 0));
+
+  return array(
+    'libs_path' => $lib_path,
+    'public_path' => 'acquia',
+    // File name in public folder to upload DiamondLayers related stuffs there
+    'file_path' => conf_path() . '/files',
+    // relative path to system files directory
+    'fonts_path' => $lib_path . '/fonts',
+    // relative path to bundeled fonts
+    'doc_direction' => 'LTR',
+    // document style direction, default is left to right
+    'animate_css_path' => $lib_path . '/animate.css',
+    // path to animate.css file
+    'animate_delay' => 350,
+    // delay between animated items list
+    'invalid_img_path' => 'public://dont_delete/invalid.jpg',
+    // Relative path to invalid image
+    'dummy_text' => t('your text here'),
+    // Relative path to invalid image
+    'video_width' => '936px',
+    // Video Width
+    'video_height' => '505px',
+    // Video height
+    'upload_location' => 'public://acquia/misc',
+    // Video height
+    'default_thumb_style' => 'square-small',
+    //
+    'demo_site' => TRUE,
+    // @demo
+    'equal_height_style' => 'equal-height',
+    // @demo
+    'path_prefix' => $base_path . (variable_get('clean_url', 0) ? '' : '?q='),
+    'empty_image_uri' => isset($empty_image->uri) ? $empty_image->uri : '',
+  );
+}
+
+/**
+ * Include .inc files as necessary.
+ *
+ * This fuction is helpful for including acquia .inc files for your module. The
+ * general case is including acquia funcitonality like this:
+ *
+ * @param $file
+ *   The base file name to be included.
+ * @param $dir
+ *   Optional subdirectory containing the include file.
+ */
+function acquia_init() {
+  // @TODO move to UI,
+  //// <DEVELOPMENT><STARTS>
+  //drupal_add_library('acquia', 'ba-debug');
+  //// <DEVELOPMENT><ENDS>
+  //
+  // add preloader
+  drupal_add_js(array('ACQUIA' => array('preloader' => theme('acquia_preloader'))), 'setting');
+  drupal_add_js(drupal_get_path('module', 'acquia') . '/js/diamond.js', array(
+    'scope' => 'header',
+    'group' => JS_LIBRARY,
+    'every_page' => TRUE,
+    'weight' => -1,
+    'requires_jquery' => TRUE,
+    'preprocess' => TRUE,
+    'cache' => TRUE,
+    'defer' => FALSE,
+  ));
+}
+
+/**
+ * Include .inc files as necessary.
+ *
+ * This fuction is helpful for including acquia .inc files for your module. The
+ * general case is including acquia funcitonality like this:
+ *
+ * @param $file
+ *   The base file name to be included.
+ * @param $dir
+ *   Optional subdirectory containing the include file.
+ */
+function acquia_include($file, $module = 'acquia', $dir = 'utility') {
+  return ctools_include($file, $module, $dir);
+}
+
+/**
+ * Include .inc files as necessary.
+ *
+ * This fuction is helpful for including .inc files for your aquia theme. The
+ * general case is including ctools funcitonality like this:
+ *
+ * @code
+ * aquia_t_include('themes');
+ * @endcode
+ *
+ * @param $file
+ *   The base file name to be included.
+ * @param $dir
+ *   Optional subdirectory containing the include file.
+ */
+function acquia_t_include($file, $dir = 'includes') {
+  static $used = array();
+
+  $dir = '/' . ($dir ? $dir . '/' : '');
+
+  $path = variable_get('ACQUIA_TF_BASE_PATH', drupal_get_path('theme', variable_get('ACQUIA_BASE_THEME')) . '/includes/acquia');
+  if (!isset($used[$dir][$file])) {
+    require_once DRUPAL_ROOT . '/' . $path . "$dir$file.inc";
+    $used[$dir][$file] = TRUE;
+  }
+}
+
+/**
+ * makes the drupal version of "__" wordpress function.
+ */
+function __($string, $domain = 'default') {
+  return t($string);
+}
+
+/**
+ * Implements hook_js_alter
+ */
+function acquia_js_alter(&$js) {
+  $path = drupal_get_path('module', 'media');
+  if (isset($js[$path . '/js/plugins/media.library.js'])) {
+    $js[$path . '/js/plugins/media.library.js']['data'] = drupal_get_path('module', 'acquia') . '/js/overrides/media.library.js';
+  }
+
+  $path = drupal_get_path('module', 'flag');
+  if (isset($js[$path . '/theme/flag.js'])) {
+    $js[$path . '/theme/flag.js']['data'] = drupal_get_path('module', 'acquia') . '/js/overrides/flag.js';
+  }
+}
+
+/**
+ * Implements hook_node_delete().
+ */
+function acquia_node_delete($node) {
+  acquia_include('meta');
+  ac_delete_node_meta($node);
+}
+
+/**
+ * Submit callback; clear system caches.
+ *
+ * @ingroup forms
+ */
+function acquia_clear_cache_submit($form, &$form_state) {
+  drupal_flush_all_caches();
+  drupal_set_message(t('Caches cleared.'));
+}
+
+
+/**
+ * Implements hook_node_load().
+ *
+ * Loads the node styles information if available for any of the nodes in the
+ * argument list.
+ */
+function acquia_node_load($nodes, $types) {
+  acquia_include('meta');
+  $nodes_meta = ac_get_node_meta(array_keys($nodes));
+  foreach ($nodes_meta as $nid => $meta) {
+    $nodes[$nid]->nodemeta = $meta;
+  }
+}
+
+
+/**
+ * Load CSS,JS and Drupal registered libs files
+ * @param $_type
+ *        type of resources to load
+ */
+function acquia_load_resources($_type = 'admin') {
+  $done = &drupal_static(__FUNCTION__, array());
+
+  if (is_array($_type)) {
+    $type = array_pop($_type);
+    if (count($_type) > 0) {
+      acquia_load_resources($_type);
+    }
+  }
+  else {
+    $type = $_type;
+  }
+
+  if (isset($done[$type])) {
+    return;
+  }
+
+  $done[$type] = TRUE;
+  $path = drupal_get_path('module', 'acquia');
+
+  switch ($type) {
+    default:
+    case 'admin':
+      drupal_add_css($path . '/css/fonts.css');
+      drupal_add_library('acquia', 'fontadmin');
+      drupal_add_library('acquia', 'colorpicker');
+      drupal_add_library('acquia', 'tooltip');
+      drupal_add_js($path . '/js/acquia.admin.js', array(
+        'weight' => 1000,
+        'scope' => 'footer'
+      ));
+      drupal_add_css($path . '/css/acquia.admin.css');
+      drupal_add_css($path . '/css/acquia-anim.css');
+      break;
+
+    // admin shortcodes related assets
+    case 'admin-shortcodes':
+      drupal_add_css($path . '/css/acquia.shortcodes.css');
+      drupal_add_js($path . '/js/acquia.shortcodes.js', array(
+        'weight' => 999,
+        'scope' => 'footer'
+      ));
+      break;
+
+    // DiamondLayers default slider - flexslider
+    case 'slider':
+      drupal_add_library('acquia', 'flexslider');
+      break;
+
+    // infscroller
+    case 'infscroller':
+      drupal_add_js($path . '/js/acquia.infinitescroll.js', array(
+        'weight' => 1000,
+        'scope' => 'footer'
+      ));
+      break;
+
+    // DiamondLayers min slider - responsiveslides
+    case 'minslider':
+      drupal_add_library('acquia', 'responsiveslides');
+      break;
+
+    // DiamondLayers video
+    case 'video':
+      drupal_add_library('acquia', 'mediaelement');
+      break;
+
+    // Icon Filter
+    case 'icon-filter':
+      drupal_add_js($path . '/js/acquia-icon-filter.js');
+      break;
+
+    // popup
+    case 'popup':
+      drupal_add_library('acquia', 'magnific-popup');
+      break;
+
+    // Isotope
+    case 'isotope':
+      drupal_add_library('acquia', 'isotope');
+      break;
+
+    case 'theme-settings':
+      drupal_add_css($path . '/css/theme-settings.css');
+      break;
+
+    // resources to add responsive
+    case 'responsive':
+      drupal_add_library('acquia', 'matchMedia');
+      break;
+
+    case 'mediabrowser':
+      // Include the DiamondLayers libs and CTools tools that we need.
+//            include_once drupal_get_path('module', 'media') . '/wysiwyg_plugins/media.inc';
+//            media_include_browser_js();
+      break;
+
+    case 'carousel':
+      drupal_add_library('acquia', 'owl.carousel');
+      break;
+
+    case 'modal':
+      // Include the DiamondLayers libs and CTools tools that we need.
+      ctools_include('ajax');
+      acquia_include('modal');
+
+      // Create our own javascript that will be used to theme a modal.
+      $settings = array(
+        'acquiaModalStyle' => array(
+          'modalSize' => array(
+            'type' => 'scale',
+            'width' => .5,
+            'height' => .5,
+
+          ),
+          'modalOptions' => array(
+            'opacity' => .5,
+            'background-color' => '#000',
+          ),
+          'animation' => 'show',
+          'modalTheme' => 'acquiaModalDialog',
+          'throbber' => theme('image', array(
+            'path' => ctools_image_path('loading-white-bg.gif', 'acquia'),
+            'alt' => t('Loading...'),
+            'title' => t('Loading')
+          )),
+          'closeText' => t('Close Window'),
+          'saveBtnText' => t('Save'),
+        ),
+      );
+
+      drupal_add_js($settings, 'setting');
+      drupal_add_library('system', 'jquery.form');
+      drupal_add_library('system', 'drupal.progress');
+      drupal_add_library('system', 'drupal.ajax');
+      drupal_add_library('acquia', 'perfect-scrollbar');
+      drupal_add_library('acquia', 'resize_event');
+
+
+      // Add CTools' javascript to the page.
+      ctools_add_js('acquia.modal', 'acquia');
+      ctools_add_css('acquia.modal', 'acquia');
+      break;
+  }
+
+}
+
+/**
+ * Get default enabled acquia theme settings
+ */
+function acquia_theme_get_settings($name = NULL, $default = NULL, $scope = NULL, $global_scope = 'acquia') {
+  $settings = &drupal_static(__FUNCTION__);
+
+  if (!isset($settings)) {
+    $theme = variable_get('theme_default');
+    $settings = variable_get("theme_{$theme}_settings");
+  }
+
+  if (isset($scope) && isset($settings[$global_scope][$scope]) && isset($settings[$global_scope][$scope][$name])) {
+    return $settings[$global_scope][$scope][$name];
+  }
+  else {
+    if (isset($settings[$global_scope][$name])) {
+      return $settings[$global_scope][$name];
+    }
+    else {
+      return $default;
+    }
+  }
+
+}
+
+/**
+ * Get default theme settings for acquia scope
+ */
+function acquia_theme_get_acquia_settings($global_scope = 'acquia') {
+  $settings = &drupal_static(__FUNCTION__);
+
+  if (!isset($settings)) {
+    $theme = variable_get('theme_default');
+    $settings = variable_get("theme_{$theme}_settings");
+  }
+
+  return isset($settings[$global_scope]) ? $settings[$global_scope] : array();
+}
+
+
+/**
+ * Implements hook_form_node_alter().
+ */
+function acquia_form_node_form_alter(&$form, $form_state, $form_id) {
+  if (isset($form['menu']) && user_access('administer menu')) {
+    $item = isset($form['menu']['link']['options']['#value']['html']) ? TRUE : FALSE;
+    if ($item) {
+      $form['menu']['link_title']['#maxlength'] = 255;
+    }
+
+    $form['menu']['link']['menu_html'] = array(
+      '#type' => 'checkbox',
+      '#title' => t('Allow html'),
+      // "html" is "1" or unset.
+      '#default_value' => $item ? 1 : 0,
+      '#description' => t('If you want to add html tags to the title of a menu, enable this. This should only be accessible to trusted users.'),
+    );
+  }
+}
+
+/**
+ * Implements hook_form_alter().
+ */
+function acquia_form_alter(&$form, &$form_state, $form_id) {
+  if (strstr($form_id, 'simplenews_block_form_')) {
+    $form['#attributes']['class'][] = 'ac-simplenews-subscribe';
+    $form['mail']['#attributes']['placeholder'] = t("Email Address");
+  }
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function acquia_form_menu_edit_item_alter(&$form, $form_state, $form_id) {
+  $form['link_title']['#maxlength'] = 255;
+  $form['menu_html'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Allow html'),
+    '#default_value' => array_key_exists('html', $form['options']['#value']) ? $form['options']['#value']['html'] : 0,
+    '#description' => t('If you want to add html tags to the title of a menu, enable this. This should only be accessible to trusted users.'),
+  );
+}
+
+/**
+ * Implements hook_menu_link_alter().
+ */
+function acquia_menu_link_alter(&$item) {
+  if (isset($item['menu_html']) && $item['menu_html']) {
+    $item['options']['html'] = $item['menu_html'];
+  }
+  elseif (isset($item['menu_html']) && $item['menu_html'] == 0) {
+    unset($item['options']['html']);
+  }
+}
+
+/**
+ * Implements hook_registry_files_alter().
+ *
+ * Adds the Mobile_Detect() class to the registry so that autoloading works.
+ * See http://drupal.stackexchange.com/questions/42266 for a discussion.
+ */
+function acquia_registry_files_alter(&$files, $modules) {
+  $files[acquia_variable_get('libs_path') . '/Mobile_Detect/Mobile_Detect.php'] = array(
+    'module' => 'mobile_detect',
+    'weight' => 0,
+  );
+}
+
+/**
+ * Implements hook_user_view_alter().
+ */
+function acquia_user_view_alter(&$build) {
+  $build['acquia_profile'] = array(
+    '#prefix' => '<div class="product-tabs ac-tabs simple-style centered-style no-sep-style clearfix" data-init="1">'
+      . '<div class="ac-tabs-i"><div class="ac-tabs-panes ac-frame-on">',
+    '#suffix' => '</div></div></div>',
+  );
+
+  $navigation = array(
+    array(
+      'data' => '<a href = "#profile">' . t('Profile') . '</a>',
+      'class' => array('current')
+    )
+  );
+  $statistic = '';
+  if (module_exists('forum')) {
+    $navigation[] = '<a href = "#replies_created">' . t('Replies Created') . '</a>';
+
+    // Tab 1 starts here
+    $tab = '<div class="ac-tab">';
+    $tab .= '	<div class="ac-tab-tab">' . t('Topics Started') . '</div>';
+    $tab .= '	<div class="ac-tab-pane">';
+    $tab .= '		<div class="inner clearfix">';
+    $tab .= '			' . views_embed_view('topic_started', 'default', $build['#account']->uid);
+    $tab .= '		</div>';
+    $tab .= '	</div>';
+    $tab .= '</div>';
+
+    $build['acquia_profile']['topic_started'] = array(
+      '#markup' => $tab,
+      '#weight' => 90
+    );
+
+    // Tab 2 starts here
+    $tab = '<div class="ac-tab">';
+    $tab .= '	<div class="ac-tab-tab">' . t('Replies Created') . '</div>';
+    $tab .= '	<div class="ac-tab-pane">';
+    $tab .= '		<div class="inner clearfix">';
+    $tab .= '			' . views_embed_view('replies_created', 'default', $build['#account']->uid);
+    $tab .= '		</div>';
+    $tab .= '	</div>';
+    $tab .= '</div>';
+
+    $build['acquia_profile']['replies_created'] = array(
+      '#markup' => $tab,
+      '#weight' => 90
+    );
+
+    $topic_count = db_select('node', 'n')
+      ->condition('n.uid', $build['#account']->uid)
+      ->condition('n.type', 'forum')
+      ->countQuery()
+      ->execute()
+      ->fetchField();
+    $query = db_select('comment', 'c')->condition('c.uid', $build['#account']->uid);
+    $query->leftJoin('node', 'n', 'n.nid = c.nid');
+    $comment_count = $query->condition('n.type', 'forum')
+      ->countQuery()
+      ->execute()
+      ->fetchField();
+    $statistic = '<p class="bbp-user-topic-count">' . t('Topics Started: @count', array('@count' => $topic_count)) . '</p><p class="bbp-user-reply-count">' . t('Replies Created: @count', array('@count' => $comment_count)) . '</p>';
+  }
+
+  if (isset($build['field_biography'])) {
+    // Tab 3 starts here
+    $tab = '<div class="ac-tab">';
+    $tab .= '	<div class="ac-tab-tab">' . t('Profile') . '</div>';
+    $tab .= '	<div class="ac-tab-pane">';
+    $tab .= '		<div class="inner ac-about-author clearfix">';
+    $tab .= '			<div class="content ac-table">';
+    if (isset($build['user_picture'])) {
+      $tab .= '				<div class="ac-author-pic ac-cell">' . drupal_render($build['user_picture']) . '</div>';
+      unset($build['user_picture']);
+    }
+    $tab .= '					<div class="ac-author-bio ac-bordered ac-cell">' . drupal_render($build['field_biography']) . '</div>';
+    $tab .= '			</div>';
+    $tab .= '		</div>';
+    $tab .= '	</div>';
+    $tab .= '</div>';
+    $build['acquia_profile']['profile_content'] = array(
+      '#markup' => $tab,
+      '#weight' => 90
+    );
+    unset($build['field_biography']);
+  }
+
+  if (isset($build['summary'])) {
+    $user = $build['#account'];
+    if (!empty($user->twitter_accounts)) {
+      $build['summary']['twitter'] = array(
+        '#type' => 'user_profile_item',
+        '#title' => t('Twitter accounts'),
+        '#markup' => theme('twitter_user_accounts', array('accounts' => $user->twitter_accounts)),
+        '#weight' => 10,
+      );
+      unset($build['#account']->twitter_accounts);
+    }
+    // Tab 4 starts here
+    $tab = '<div class="ac-tab">';
+    $tab .= '	<div class="ac-tab-tab">' . t('Summary') . '</div>';
+    $tab .= '	<div class="ac-tab-pane">';
+    $tab .= '		<div class="inner clearfix">';
+    $tab .= '		  ' . drupal_render($build['summary']);
+    $tab .= '		</div>';
+    $tab .= '	</div>';
+    $tab .= '</div>';
+    $build['acquia_profile']['summary'] = array(
+      '#markup' => $tab,
+      '#weight' => 100
+    );
+    unset($build['summary']);
+  }
+
+  $build['summary']['#title'] = '';
+  // Apply any extra added fields to Summary
+  foreach ($build as $name => $field) {
+    if (strpos($name, 'field_') !== FALSE) {
+      $build['summary'][$name] = $field;
+      unset($build[$name]);
+    }
+  }
+}
+
+
+/**
+ * Perform periodic actions.
+ *
+ * Modules that require some commands to be executed periodically can
+ * implement hook_cron(). The engine will then call the hook whenever a cron
+ * run happens, as defined by the administrator. Typical tasks managed by
+ * hook_cron() are database maintenance, backups, recalculation of settings
+ * or parameters, automated mailing, and retrieving remote data.
+ *
+ * Short-running or non-resource-intensive tasks can be executed directly in
+ * the hook_cron() implementation.
+ *
+ * Long-running tasks and tasks that could time out, such as retrieving remote
+ * data, sending email, and intensive file tasks, should use the queue API
+ * instead of executing the tasks directly. To do this, first define one or
+ * more queues via hook_cron_queue_info(). Then, add items that need to be
+ * processed to the defined queues.
+ */
+function acquia_cron() {
+  acquia_include('utility');
+  ac_register_theme();
+}
+
+
+/**
+ * Implements hook_field_formatter()
+ */
+function acquia_field_formatter_info() {
+  $formatters = array();
+
+  $formatters['ac_carousel'] = array(
+    'label' => t('Diamond Carousel'),
+    'field types' => array('image'),
+    'settings' => array(
+      'preview_style' => ACQUIA_CAROUSEL_PREVIEW_STYLE,
+      'thumb_style' => ACQUIA_CAROUSEL_THUMB_STYLE,
+      'id' => 'product-images',
+      'class' => 'product-images',
+    ),
+  );
+
+  $formatters['ac_taxonomy_tree'] = array(
+    'label' => t('Taxonomy tree - Inline'),
+    'field types' => array('taxonomy_term_reference'),
+    'settings' => array(
+      'depth' => 2,
+    ),
+  );
+
+  return $formatters;
+}
+
+/**
+ * Implements hook_field_formatter_settings_form().
+ */
+function acquia_field_formatter_settings_form($field, $instance, $view_mode, $form, &$form_state) {
+  $display = $instance['display'][$view_mode];
+  $settings = $display['settings'];
+  $element = array();
+  if ($display['type'] == 'ac_carousel') {
+    $ops = image_style_options();
+    $element['preview_style'] = array(
+      '#title' => t('Image style for slide:'),
+      '#type' => 'select',
+      '#options' => $ops,
+      '#default_value' => $settings['preview_style'],
+    );
+    $element['thumb_style'] = array(
+      '#title' => t('Image style for thumb:'),
+      '#type' => 'select',
+      '#options' => $ops,
+      '#default_value' => $settings['thumb_style'],
+    );
+    $element['id'] = array(
+      '#title' => t('Id HTML attribute of slider:'),
+      '#type' => 'textfield',
+      '#default_value' => $settings['id'],
+    );
+    $element['class'] = array(
+      '#title' => t('Class attribute of slider:'),
+      '#type' => 'textfield',
+      '#default_value' => $settings['class'],
+      '#description' => t('you can enter multiple classes separated by whitespace.'),
+    );
+  }
+  else {
+    if ($display['type'] == 'ac_taxonomy_tree') {
+      $element['depth'] = array(
+        '#title' => t('Tree depth'),
+        '#description' => t('Tree depth from child to parent starting from child. use -1 to render the whole tree.'),
+        '#type' => 'textfield',
+        '#default_value' => $settings['depth'],
+      );
+    }
+  }
+  return $element;
+}
+
+/**
+ * Implements hook_field_formatter_settings_summary().
+ */
+function acquia_field_formatter_settings_summary($field, $instance, $view_mode) {
+  $display = $instance['display'][$view_mode];
+  $settings = $display['settings'];
+
+  if ($display['type'] == 'ac_carousel') {
+    if (empty($settings['preview_style'])) {
+      $settings['preview_style'] = 'Original Image';
+    }
+    if (empty($settings['thumb_style'])) {
+      $settings['thumb_style'] = 'Original Image';
+    }
+    $summary = t('Preview style: @preview_style, Thumb style: @thumb_style', array(
+      '@preview_style' => $settings['preview_style'],
+      '@thumb_style' => $settings['thumb_style'],
+    ));
+    return $summary;
+  }
+  else {
+    if ($display['type'] == 'ac_taxonomy_tree') {
+      $summary = t('Tree depth', array(
+        '@depth' => $settings['depth'],
+      ));
+      return $summary;
+    }
+  }
+}
+
+/**
+ * Implements hook_field_formatter_prepare_view().
+ *
+ * This preloads all taxonomy terms for multiple loaded objects at once and
+ * unsets values for invalid terms that do not exist.
+ */
+function acquia_field_formatter_prepare_view($entity_type, $entities, $field, $instances, $langcode, &$items, $displays) {
+}
+
+/**
+ * Implements hook_field_formatter_view().
+ */
+function acquia_field_formatter_view($entity_type, $entity, $field, $instance, $langcode, $items, $display) {
+  $settings = $display['settings'];
+  $element = array();
+  switch ($display['type']) {
+    case 'ac_taxonomy_tree':
+      foreach ($items as $delta => $item) {
+        $terms = taxonomy_term_load_multiple($item);
+        $term = $terms[$item['tid']];
+        $tree = array();
+        foreach (taxonomy_get_tree($term->vid) as $term) {
+          $uri = taxonomy_term_uri($term);
+          $tree[] = l($term->name, $uri['path']);
+        }
+        $depth = intval($settings['depth']);
+        $element[$delta]['all'] = array(
+          '#markup' => '<div class="taxonomy-tree-inline all">' . implode(' - ', array_slice($tree, 0, -1, TRUE)) . '</div>',
+        );
+
+        $element[$delta]['mini'] = array(
+          '#markup' => '<div class="taxonomy-tree-inline mini">' . implode(' - ', array_slice($tree, -($depth), $depth, TRUE)) . '</div>',
+        );
+      }
+      break;
+
+    case  'ac_carousel':
+      $element[0] = array(
+        '#theme' => 'image_entity_ac_carousel',
+        '#images' => $items,
+        '#preview_style' => $settings['preview_style'],
+        '#thumb_style' => $settings['thumb_style'],
+        '#attributes' => array(
+          'id' => $settings['id'],
+          'class' => explode(' ', $settings['class'])
+        ),
+      );
+      break;
+
+  }
+  return $element;
+}
+
+/**
+ * @DEPRICATED
+ */
+function acquia_get_media_field($media) {
+  $fid = 0;
+  if (isset($media['fid'])) {
+    $fid = $media['fid'];
+  }
+  else {
+    if (!empty($media)) {
+      $fid = $media;
+    }
+  }
+  return $fid;
+}

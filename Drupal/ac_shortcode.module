@@ -1,0 +1,819 @@
+<?php
+/**
+ * @file
+ *
+ *    DiamondLayers shortcode module
+ */
+
+/**
+ * AJAX URL for acquia shortcode queries
+ */
+define("ACQUIA_SHORTCODE_AJAX_URL", 'admin/acquia/ac_shortcode/sc_form');
+
+/**
+ * Path to DiamondLayers Shortcode Classes
+ */
+define("ACQUIA_SHORTCODE_CLASSES_PATH", drupal_get_path('module', 'ac_shortcode') . '/classes');
+
+
+/**
+ * Implements hook_menu().
+ */
+function ac_shortcode_menu() {
+  $items = array();
+
+  $items[ACQUIA_SHORTCODE_AJAX_URL . '/%'] = array(
+    'title' => t("rendering shortcode settings form"),
+    'page callback' => '_ac_shortcode_render_form_ajax_callback',
+    'page arguments' => array(4),
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+  );
+
+  return $items;
+}
+
+/**
+ * Implements hook_form_alter().
+ */
+function ac_shortcode_form_alter(&$form, $form_state, $form_id) {
+  if ($form_id == 'filter_admin_format_form') {
+    array_unshift($form['#submit'], '_ac_shortcode_settings_form_submit');
+  }
+}
+
+/**
+ * Ajax callback for shortcode tags
+ */
+function _ac_shortcode_render_form_ajax_callback($tag) {
+  acquia_include('utility', 'ac_shortcode');
+  $tag_info = ac_shortcode_get_sc_info($tag);
+
+  $output = array();
+
+  if (empty($tag_info)) {
+    return;
+  }
+
+  ctools_include('ajax');
+  acquia_include('modal');
+  acquia_include('process', 'ac_shortcode'); // Include acquia shortcode process utility
+
+  ac_shortcode_add_sc_files($tag_info);
+
+  $form_state = array(
+    'title' => $tag_info['title'],
+    'ajax' => TRUE,
+    'cache' => TRUE,
+  );
+
+  $form = $tag_info['form callback'];
+  $form_arr = $tag_info['form callback'](array(), $form_state);
+
+  if (isset($form_arr['#attached']) && isset($form_arr['#attached']['css'])) {
+    $styles = $form_arr['#attached']['css'];
+    $styles = drupal_get_css($styles);
+    $output[] = ajax_command_prepend('head', $styles);
+  }
+
+  if (isset($form_arr['#attached']) && isset($form_arr['#attached']['js'])) {
+    $scripts = $form_arr['#attached']['js'];
+    $scripts = drupal_get_js($scripts);
+    $output[] = ajax_command_prepend('head', $scripts);
+  }
+
+  $output[] = array_shift(acquia_modal_form_wrapper($form, $form_state));
+
+  if (!empty($form_state['executed']) && $form_state['clicked_button']['#value'] == t('submit')) {
+    // We'll just overwrite the form output if it was successful.
+    $output = array();
+    $values = $form_state['values'];
+    ac_shortcode_preprocess_values($tag, $values);
+    $shortcode = ac_shortcode_create_shortcode($tag, $values);
+    $output[] = ac_shortcode_command_sc_insert($shortcode);
+    $output[] = acquia_modal_command_dismiss();
+  }
+  print ajax_render($output);
+  // Halt page processing
+  exit;
+}
+
+/**
+ * built-in preprocess of shortcode values
+ */
+function ac_shortcode_preprocess_values($tag, &$values) {
+  acquia_include('utility', 'ac_shortcode');
+  $tag_info = ac_shortcode_get_sc_info($tag);
+  ac_shortcode_add_sc_files($tag_info);
+
+  // remove drupal form values and empty attributes
+  $keys = array('submit', 'form_build_id', 'form_token', 'form_id', 'op');
+  foreach ($values as $attr => $val) {
+    if (empty($val) || in_array($attr, $keys)) {
+      unset($values[$attr]);
+    }
+  }
+
+  // shortcode specific preprocess values
+  if (isset($tag_info['values process callback']) && function_exists($tag_info['values process callback'])) {
+    $tag_info['values process callback']($values);
+  }
+
+}
+
+
+/**
+ * Insert Shortcode within the tinyMCE editor body.
+ *
+ * @param $sc
+ *   The shortcode to place within the editor.
+ */
+function ac_shortcode_command_sc_insert($sc) {
+  return array(
+    'command' => 'acquiaInsertShortcode',
+    'output' => $sc,
+  );
+}
+
+/**
+ * preprocess shortcode attributes before making shortcode
+ * this is the core preprocess function. to make any
+ * changes do in "shortcode preprocess" function of
+ * shortcode info.
+ * @param $values
+ *  shortcode
+ */
+function ac_shortcode_alter_sc_attrs(&$attrs) {
+
+}
+
+/**
+ * Build a list of all ac_shortcodes (for filter).
+ * Calls the ac_shortcode hook with the list parameter on all module
+ */
+function ac_shortcode_list_all($reset = FALSE) {
+  $shortcodes = &drupal_static(__FUNCTION__, NULL, $reset);
+
+  if (!isset($shortcodes) || $reset) {
+    $sc_collection = shortcodes_collection();
+    $shortcodes = (array) $sc_collection->getAllShortcodes();
+    // Allow alteration of the ac_shortcodes.
+    drupal_alter('ac_shortcode_info', $shortcodes);
+  }
+
+  return $shortcodes;
+}
+
+/**
+ * Returns only enabled ac_shortcodes for a format
+ */
+function ac_shortcode_list_all_enabled($format, $reset = FALSE) {
+  if (is_string($format)) {
+    $format = filter_format_load($format);
+  }
+
+  $ac_shortcodes_enabled = &drupal_static(__FUNCTION__, array());
+  if (isset($ac_shortcodes_enabled[$format->format]) && !$reset) {
+    return $ac_shortcodes_enabled[$format->format];
+  }
+  $ac_shortcodes_enabled[$format->format] = array();
+
+  $ac_shortcodes = ac_shortcode_list_all();
+
+  $filters = filter_list_format($format->format);
+
+  if (empty($filters['ac_shortcode'])) {
+    return array();
+  }
+
+  foreach ($filters['ac_shortcode']->settings as $name => $enabled) { // Run through all ac_shortcodes
+    if ($enabled && isset($ac_shortcodes[$name])) {
+      $ac_shortcodes_enabled[$format->format][$name] = $ac_shortcodes[$name];
+    }
+  }
+  return $ac_shortcodes_enabled[$format->format];
+}
+
+/**
+ * Implementation of hook_filter_info().
+ */
+function ac_shortcode_filter_info() {
+  $filters['ac_shortcode'] = array(
+    'title' => t('DiamondLayers Shortcodes'),
+    'description' => t('Provides WP like shortcodes to this text format.'),
+    'process callback' => '_ac_shortcode_process',
+    'settings callback' => '_ac_shortcode_settings_form',
+    'tips callback' => '_ac_shortcode_filter_tips',
+    'cache' => FALSE,
+  );
+  $filters['ac_shortcode_cachable'] = array(
+    'title' => t('DiamondLayers Shortcodes - Cachable'),
+    'description' => t('Provides WP like shortcodes to this text format.'),
+    'process callback' => '_ac_shortcode_process',
+    'settings callback' => '_ac_shortcode_cachable_settings_form',
+    'tips callback' => '_ac_shortcode_filter_tips',
+    'cache' => TRUE,
+  );
+  $filters['ac_shortcode_text_corrector'] = array(
+    'title' => t('DiamondLayers Shortcodes - html corrector'),
+    'description' => t('Trying to correct the html around ac_shortcodes. Enable only if you using wysiwyg editor.'),
+    'process callback' => '_ac_shortcode_postprocess_text',
+  );
+
+  return $filters;
+}
+
+
+/**
+ * implementing hook_theme()
+ */
+function ac_shortcode_theme($existing, $type, $theme, $path) {
+  $path = drupal_get_path('module', 'ac_shortcode') . '/templates';
+  $items = array(
+    'ac_shortcode_testimonials_headshot' => array(
+      'variables' => array('avatar' => array(), 'settings' => array()),
+      'template' => 'ac-shortcode-testimonials--headshot',
+      'path' => $path,
+    ),
+    'ac_shortcode_testimonials_left' => array(
+      'variables' => array('avatar' => array(), 'settings' => array()),
+      'template' => 'ac-shortcode-testimonials--left',
+      'path' => $path,
+    ),
+    'ac_shortcode_testimonials_right' => array(
+      'variables' => array('avatar' => array(), 'settings' => array()),
+      'template' => 'ac-shortcode-testimonials--right',
+      'path' => $path,
+    ),
+    'ac_shortcode_testimonials_bottom' => array(
+      'variables' => array('avatar' => array(), 'settings' => array()),
+      'template' => 'ac-shortcode-testimonials--bottom',
+      'path' => $path,
+    ),
+  );
+  return $items;
+}
+
+
+/**
+ * Filter tips callback
+ */
+function _ac_shortcode_filter_tips($filter, $format, $long = FALSE) {
+  $ac_shortcodes = ac_shortcode_list_all_enabled($format);
+  $tips = array();
+  // $args = func_get_args();
+  foreach ($filter->settings as $name => $enabled) { // Run through all ac_shortcodes
+    if ($enabled && !empty($ac_shortcodes[$name]['tips callback']) && function_exists($ac_shortcodes[$name]['tips callback'])) {
+      $tips[] = call_user_func_array($ac_shortcodes[$name]['tips callback'], array(
+        $format,
+        $long
+      ));
+    }
+  }
+
+  if (!empty($tips)) {
+    return theme('item_list',
+      array(
+        'title' => t('ac_shortcodes usage'),
+        'items' => $tips,
+        'type' => 'ol',
+      )
+    );
+  }
+}
+
+
+/**
+ * Settings form for shortcode filter
+ *
+ * Lists all available shortcode for a given filter format
+ *
+ * @TODO Auto enable all shortcodes that are base - they are
+ * distinguished by 'always_enabled' key in shortcode info callback function
+ */
+function _ac_shortcode_cachable_settings_form(&$form, &$form_state, $filter, $format, $defaults) {
+  $settings = array();
+  $filter->settings += $defaults;
+  $sc_collection = shortcodes_collection();
+  $shortcodes = $sc_collection->getAllShortcodes();
+  foreach ($shortcodes as $key => $shortcode) {
+    $default = 0;
+    $disabled = FALSE;
+
+    if (isset($shortcode['always_enabled']) && $shortcode['always_enabled'] === TRUE) {
+      $default = 1;
+      $disabled = TRUE;
+    }
+    elseif (!empty($filter->settings[$key])) {
+      $default = $filter->settings[$key];
+    }
+    elseif (!empty($defaults[$key])) {
+      $default = $defaults[$key];
+    }
+
+    if (isset($shortcode['hidden']) && $shortcode['hidden'] == TRUE) {
+      $settings[$key] = array(
+        '#type' => 'value',
+        '#value' => $default,
+      );
+    }
+    else {
+      $settings[$key] = array(
+        '#type' => 'checkbox',
+        '#title' => t('Enable %name shortcode', array('%name' => $shortcode['title'])),
+        '#default_value' => $default,
+        '#description' => isset($shortcode['description']) ? $shortcode['description'] : t('Enable or disable this shortcode in this input format'),
+      );
+      if ($disabled) {
+        $settings[$key]['#disabled'] = $disabled;
+      }
+    }
+  }
+  return $settings;
+}
+
+
+/**
+ * Settings form for shortcode filter
+ *
+ * Lists all available shortcode for a given filter format
+ *
+ * @TODO Auto enable all shortcodes that are base - they are
+ * distinguished by 'always_enabled' key in shortcode info callback function
+ */
+function _ac_shortcode_settings_form(&$form, &$form_state, $filter, $format, $defaults) {
+  $settings = array();
+  $filter->settings += $defaults;
+  $sc_collection = shortcodes_collection();
+  $shortcodes = $sc_collection->getAllShortcodes();
+  foreach ($shortcodes as $key => $shortcode) {
+    $default = 0;
+    $disabled = FALSE;
+
+    if (isset($shortcode['always_enabled']) && $shortcode['always_enabled'] === TRUE) {
+      $default = 1;
+      $disabled = TRUE;
+    }
+    elseif (!empty($filter->settings[$key])) {
+      $default = $filter->settings[$key];
+    }
+    elseif (!empty($defaults[$key])) {
+      $default = $defaults[$key];
+    }
+
+    if (isset($shortcode['hidden']) && $shortcode['hidden'] == TRUE) {
+      $settings[$key] = array(
+        '#type' => 'value',
+        '#value' => $default,
+      );
+    }
+    else {
+      $settings[$key] = array(
+        '#type' => 'checkbox',
+        '#title' => t('Enable %name shortcode', array('%name' => $shortcode['title'])),
+        '#default_value' => $default,
+        '#description' => isset($shortcode['description']) ? $shortcode['description'] : t('Enable or disable this shortcode in this input format'),
+      );
+      if ($disabled) {
+        $settings[$key]['#disabled'] = $disabled;
+      }
+    }
+  }
+  return $settings;
+}
+
+/**
+ * Raw Shortcode settings form submit
+ */
+function _ac_shortcode_settings_form_submit($form, &$form_state) {
+
+  if ($form_state['values']['filters']['ac_shortcode']['status'] == 1) {
+    $filter = 'ac_shortcode';
+  }
+  else {
+    if ($form_state['values']['filters']['ac_shortcode_cachable']['status'] == 1) {
+      $filter = 'ac_shortcode_cachable';
+    }
+    else {
+      return;
+    }
+  }
+
+  $values = $form_state['values']['filters'][$filter];
+  // Enable/Disable dependent shortcodes
+  if ($values['status'] == TRUE) {
+    // include shortcodes utility
+    acquia_include('utility', 'ac_shortcode');
+    foreach ($values['settings'] as $sc => $status) {
+      $sc_info = ac_shortcode_get_sc_info($sc);
+
+      if (isset($sc_info['enabled'])) {
+        $i = 0;
+
+        $bits = array();
+        $operation = isset($sc_info['enabled operation']) ? $sc_info['enabled operation'] : 'AND';
+        foreach ($sc_info['enabled'] as $_key => $_val) {
+          if (isset($values['settings'][$_key]) && $values['settings'][$_key] == $_val) {
+            $bits[] = 1;
+          }
+          else {
+            $bits[] = 0;
+          }
+        }
+        if (ac_shortcode_bitwise_array($bits, $operation) == 1) {
+          $form_state['values']['filters'][$filter]['settings'][$sc] = 1;
+        }
+        else {
+          $form_state['values']['filters'][$filter]['settings'][$sc] = 0;
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Tags cache
+ *
+ * @param $tags
+ *
+ * @return mixed
+ * @access private
+ */
+function _ac_shortcode_tags($tags = NULL) {
+  $ac_shortcodes = &drupal_static(__FUNCTION__, array());
+  if ($tags) {
+    $ac_shortcodes = $tags;
+    return TRUE;
+  }
+
+  return $ac_shortcodes;
+}
+
+/**
+ * Checking the given tag is valid ac_shortcode macro or not
+ *
+ * @param $tag
+ *
+ * @return bool TRUE if the $tag is valid macro
+ */
+function ac_shortcode_is_tag($tag) {
+  $tags = _ac_shortcode_tags();
+
+  if (isset($tags[$tag])) {
+    return TRUE;
+  }
+
+  return FALSE;
+}
+
+/**
+ * Process the ac_shortcodes according to the text and the text format.
+ */
+function _ac_shortcode_process($text, $filter) {
+  acquia_include('utility', 'ac_shortcode');
+  acquia_include('process', 'ac_shortcode');
+
+  $ac_shortcodes = ac_shortcode_list_all();
+  $ac_shortcodes_enabled = array();
+  // remove preview only breaks
+
+  //$text = ac_shortcode_remove_autop($text);
+  foreach ($filter->settings as $name => $value) { // run through all ac_shortcodes
+    if ($value && !empty($ac_shortcodes[$name]['process callback'])) {
+      $ac_shortcodes_enabled[$name] = array(
+        'function' => $ac_shortcodes[$name]['process callback'],
+      );
+    }
+  }
+
+  if (empty($ac_shortcodes_enabled)) {
+    return $text;
+  }
+
+  // save the ac_shortcodes
+  _ac_shortcode_tags($ac_shortcodes_enabled);
+
+  // improved version - recursive processing - embed tags within other tags is supported!
+  $chunks = preg_split('!(\[{1,2}.*?\]{1,2})!', $text, -1, PREG_SPLIT_DELIM_CAPTURE);
+
+  $heap = array();
+  $heap_index = array();
+
+  foreach ($chunks as $c) {
+    if (!$c) {
+      continue;
+    }
+
+    $escaped = FALSE;
+
+    if ((substr($c, 0, 2) == '[[') && (substr($c, -2, 2) == ']]')) {
+      $escaped = TRUE;
+      // checking media tags, eg: [[{ }]]
+      if ((substr($c, 0, 3) != '{') && (substr($c, -3, 1) != '}')) {
+        // remove outer []
+        $c = substr($c, 1, -1);
+      }
+    }
+    // ac_shortcode or not
+    if (!$escaped && ($c[0] == '[') && (substr($c, -1, 1) == ']')) {
+      // $c maybe contains ac_shortcode macro
+
+      // self-closing tag or not
+      // remove outer []
+      $original_text = $c;
+      $c = substr($c, 1, -1);
+      $c = trim($c);
+
+      $ts = explode(' ', $c);
+      $tag = array_shift($ts);
+      $tag = trim($tag, '/');
+
+      if (!ac_shortcode_is_tag($tag)) {
+        // current tag is not an enabled ac_shortcode macro
+        array_unshift($heap_index, '_string_');
+        array_unshift($heap, $original_text);
+      }
+      elseif (substr($c, -1, 1) == '/') {
+        // process a self closing tag - it has / at the end!
+        /*
+        * 0 - the full tag text?
+        * 1/5 - An extra [ or ] to allow for escaping ac_shortcodes with double [[]]
+        * 2 - The ac_shortcode name
+        * 3 - The ac_shortcode argument list
+        * 4 - The content of a ac_shortcode when it wraps some content.
+        * */
+//        $ts = explode(' ', $c);
+//        $tag = array_shift($ts);
+
+        $m = array(
+          $c,
+          '',
+          $tag,
+          implode(' ', $ts),
+          NULL,
+          ''
+        );
+        array_unshift($heap_index, '_string_');
+        array_unshift($heap, _ac_shortcode_process_tag($m));
+      }
+      elseif ($c[0] == '/') {
+        // closing tag - process the heap
+        $closing_tag = substr($c, 1);
+
+        $process_heap = array();
+        $process_heap_index = array();
+        $found = FALSE;
+
+        // get elements from heap and process
+        do {
+          $tag = array_shift($heap_index);
+          $heap_text = array_shift($heap);
+
+          if ($closing_tag == $tag) {
+            // process the whole tag
+            $m = array(
+              $tag . ' ' . $heap_text,
+              '',
+              $tag,
+              $heap_text,
+              implode('', $process_heap),
+              ''
+            );
+            $str = _ac_shortcode_process_tag($m);
+            array_unshift($heap_index, '_string_');
+            array_unshift($heap, $str);
+            $found = TRUE;
+          }
+          else {
+            array_unshift($process_heap, $heap_text);
+            array_unshift($process_heap_index, $tag);
+          }
+        } while (!$found && $heap);
+
+        if (!$found) {
+          foreach ($process_heap as $val) {
+            array_unshift($heap, $val);
+          }
+          foreach ($process_heap_index as $val) {
+            array_unshift($heap_index, $val);
+          }
+        }
+
+      }
+      else {
+        // starting tag. put to the heap
+//        $ts = explode(' ', $c);
+//        $tag = array_shift($ts);
+
+        array_unshift($heap_index, $tag);
+        array_unshift($heap, implode(' ', $ts));
+      }
+    } // escaped or !ac_shortcode
+    else {
+      // not found a pair?
+      array_unshift($heap_index, '_string_');
+      array_unshift($heap, $c);
+    }
+  } // foreach
+
+  return (implode('', array_reverse($heap)));
+}
+
+/*
+ * Html corrector for wysiwyg editors
+ *
+ * Correcting p elements around the divs. No div are allowed in p so remove them.
+ *
+ */
+function _ac_shortcode_postprocess_text($text, $filter) {
+  $patterns = array(
+    '|#!#|is',
+    '!<p>(&nbsp;|\s)*(<\/*div>)!is',
+    '!<p>(&nbsp;|\s)*(<div)!is',
+    '!(<\/div.*?>)\s*</p>!is',
+    '!(<div.*?>)\s*</p>!is',
+  );
+
+  $replacements = array('', '\\2', '\\2', '\\1', '\\1');
+  return preg_replace($patterns, $replacements, $text);
+}
+
+/**
+ * Regular Expression callable for do_ac_shortcode() for calling ac_shortcode hook.
+ *
+ * @see get_ac_shortcode_regex for details of the match array contents.
+ *
+ * @param array $m Regular expression match array
+ *
+ * @return mixed False on failure.
+ */
+function _ac_shortcode_process_tag($m) {
+  // get tags from static cache
+  $ac_shortcodes = _ac_shortcode_tags();
+  $tag = $m[2];
+
+  if (!empty($ac_shortcodes[$tag])) {
+
+    $tag_info = ac_shortcode_get_sc_info($tag);
+
+    if (!empty($tag_info)) {
+      ac_shortcode_add_sc_files($tag_info);
+    }
+
+    // tag exists (enabled)
+    $attr = _ac_shortcode_parse_attrs($m[3]);
+    /*
+    * 0 - the full tag text?
+    * 1/5 - An extra [ or ] to allow for escaping ac_shortcodes with double [[]]
+    * 2 - The ac_shortcode name
+    * 3 - The ac_shortcode argument list
+    * 4 - The content of a shortcode when it wraps some content.
+    * */
+
+    if (!is_null($m[4])) {
+      // enclosing tag - extra parameter
+      return $m[1] . call_user_func($ac_shortcodes[$tag]['function'], $attr, $m[4], $m[2]) . $m[5];
+    }
+    else {
+      // self-closing tag
+      //dpr('fv self closing: ' . $ac_shortcodes[$tag]->function);
+      return $m[1] . call_user_func($ac_shortcodes[$tag]['function'], $attr, NULL, $m[2]) . $m[5];
+    }
+  }
+  elseif (is_null($m[4])) {
+    return $m[4];
+  }
+  return '';
+}
+
+/**
+ * Retrieve all attributes from the ac_shortcodes tag.
+ *
+ * The attributes list has the attribute name as the key and the value of the
+ * attribute as the value in the key/value pair. This allows for easier
+ * retrieval of the attributes, since all attributes have to be known.
+ *
+ * @param string $text
+ *
+ * @return array List of attributes and their value.
+ */
+function _ac_shortcode_parse_attrs($text) {
+  $attrs = array();
+  $pattern = '/(\w+)\s*=\s*"([^"]*)"(?:\s|$)|(\w+)\s*=\s*\'([^\']*)\'(?:\s|$)|(\w+)\s*=\s*([^\s\'"]+)(?:\s|$)|"([^"]*)"(?:\s|$)|(\S+)(?:\s|$)/';
+  $text = preg_replace("/[\x{00a0}\x{200b}]+/u", " ", $text);
+  $text = html_entity_decode($text);
+  if (preg_match_all($pattern, $text, $match, PREG_SET_ORDER)) {
+    foreach ($match as $m) {
+      if (!empty($m[1])) {
+        $attrs[strtolower($m[1])] = stripcslashes($m[2]);
+      }
+      elseif (!empty($m[3])) {
+        $attrs[strtolower($m[3])] = stripcslashes($m[4]);
+      }
+      elseif (!empty($m[5])) {
+        $attrs[strtolower($m[5])] = stripcslashes($m[6]);
+      }
+      elseif (isset($m[7]) and strlen($m[7])) {
+        $attrs[] = stripcslashes($m[7]);
+      }
+      elseif (isset($m[8])) {
+        $attrs[] = stripcslashes($m[8]);
+      }
+    }
+  }
+  else {
+    $attrs = ltrim($text);
+  }
+  return $attrs;
+}
+
+/**
+ * Retrieve the ac_shortcode regular expression for searching.
+ *
+ * The regular expression combines the ac_shortcode tags in the regular expression
+ * in a regex class.
+ *
+ * The regular expression contains 6 different sub matches to help with parsing.
+ *
+ * 1/6 - An extra [ or ] to allow for escaping ac_shortcodes with double [[]]
+ * 2 - The ac_shortcode name
+ * 3 - The ac_shortcode argument list
+ * 4 - The self closing /
+ * 5 - The content of a ac_shortcode when it wraps some content.
+ *
+ * @param $names The tag names
+ *
+ * @return string The ac_shortcode search regular expression
+ */
+function _ac_shortcode_get_ac_shortcode_regex($names) {
+  $tagregexp = join('|', array_map('preg_quote', $names));
+
+  // WARNING! Do not change this regex without changing do_ac_shortcode_tag() and strip_ac_shortcodes()
+  return '(.?)\[(' . $tagregexp . ')\b(.*?)(?:(\/))?\](?:(.+?)\[\/\2\])?(.?)';
+}
+
+/**
+ * Combine user attributes with known attributes and fill in defaults when needed.
+ *
+ * The pairs should be considered to be all of the attributes which are
+ * supported by the caller and given as a list. The returned attributes will
+ * only contain the attributes in the $pairs list.
+ *
+ * If the $attrs list has unsupported attributes, then they will be ignored and
+ * removed from the final returned list.
+ *
+ * @param array $pairs Entire list of supported attributes and their defaults.
+ * @param array $attrs User defined attributes in ac_shortcode tag.
+ *
+ * @return array Combined and filtered attribute list.
+ */
+function ac_shortcode_attrs($pairs, $attrs) {
+  $attrs = (array) $attrs;
+  $out = array();
+  foreach ($pairs as $name => $default) {
+    if (array_key_exists($name, $attrs)) {
+      $out[$name] = $attrs[$name];
+    }
+    else {
+      $out[$name] = $default;
+    }
+  }
+  return $out;
+}
+
+/**
+ * Get Shortcode Collection Object
+ */
+function shortcodes_collection($reset = FALSE) {
+  $collection = &drupal_static(__FUNCTION__, NULL);
+
+  if (!isset($collection)) {
+    require_once ACQUIA_SHORTCODE_CLASSES_PATH . '/base.inc';
+    require_once ACQUIA_SHORTCODE_CLASSES_PATH . '/collection.inc';
+    $collection = new DiamondBuilderCollection($reset);
+  }
+
+  return $collection;
+}
+
+
+/**
+ * Implementation of hook_flush_caches().
+ *
+ * This tells Drupal's cache handling system the name of our caching
+ * table, so expired items will be purged automatically and this table
+ * also affected by the empty all caches function.
+ */
+function ac_shortcode_flush_caches() {
+  return array('cache_ac_shortcode');
+}
+
+function ac_shortcode_gen_cid($shortcode, $attrs, $extra = '') {
+  if (is_array($attrs)) {
+    $attrs = md5(serialize($attrs));
+  }
+  if (!empty($extra)) {
+    $attrs .= md5($extra);
+  }
+  return sprintf('%s::%s', $shortcode, $attrs);
+}
